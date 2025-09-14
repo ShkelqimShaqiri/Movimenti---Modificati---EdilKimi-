@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>EdilManager - EdilKimi (FIX v2)</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <style>
+    :root { --bg:#fff5e6; --text:#000; --box:#ffe0b2; --accent:#d35400; }
+    body.dark { --bg:#1e1e1e; --text:#eee; --box:#2a2a2a; }
+    *{box-sizing:border-box}
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;background:var(--bg);color:var(--text);margin:0;padding:24px}
+    h1{color:var(--accent);margin:0 0 12px}
+    .row{display:grid;grid-template-columns:1fr;gap:16px}
+    @media(min-width:960px){.row{grid-template-columns:1fr 1fr}}
+    .box{background:var(--box);padding:12px;border-radius:12px;box-shadow:0 2px 8px rgba(0,0,0,.06)}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+    .toolbar>*{margin:0}
+    form#form,.filters{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;align-items:center}
+    form#form input,form#form select,.filters input,.filters select{width:100%}
+    form#form button{grid-column:span 1}
+    form#form .wide{grid-column:span 2}
+    @media(max-width:900px){form#form,.filters{grid-template-columns:1fr 1fr}form#form button{grid-column:span 2}}
+    input,select{padding:8px;border-radius:8px;border:1px solid rgba(0,0,0,.2);background:#fff}
+    button{padding:8px 12px;background:var(--accent);color:#fff;border:none;cursor:pointer;border-radius:8px}
+    .badge{padding:2px 6px;border-radius:6px;background:#fff;color:#000;font-size:.75rem}
+    ul{padding:0;list-style:none;margin:0}
+    li{background:#fff;color:#000;padding:10px;margin-bottom:8px;border-left:6px solid;border-radius:8px;display:flex;justify-content:space-between;align-items:center;gap:8px;box-shadow:0 1px 4px rgba(0,0,0,.06)}
+    .entrata{border-color:#2ecc71}
+    .uscita{border-color:#e74c3c}
+    .azioni{display:flex;gap:6px}
+    .muted{opacity:.8;font-size:.9rem}
+    canvas{max-width:100%;margin-top:10px}
+    .totali{line-height:1.8}
+  </style>
+</head>
+<body>
+  <header class="box">
+    <div class="toolbar">
+      <h1 style="flex:1">EdilKimi · EdilManager</h1>
+      <button type="button" id="btnTheme">🌓 Tema</button>
+      <button type="button" id="btnBackup">💾 Backup</button>
+      <label class="badge" for="inpRestore" title="Importa backup JSON">Ripristina
+        <input style="display:none" type="file" id="inpRestore" accept="application/json" />
+      </label>
+      <button type="button" id="btnPDF">📄 Esporta PDF</button>
+      <button type="button" id="btnCSV">🧾 Esporta CSV</button>
+      <span class="badge" id="infoItems">0 movimenti</span>
+    </div>
+  </header>
+
+  <section class="box">
+    <form id="form">
+      <select id="tipo" title="Tipo movimento">
+        <option value="entrata">Entrata</option>
+        <option value="uscita">Uscita</option>
+      </select>
+      <input type="number" id="importo" placeholder="Importo lordo (€)" required step="0.01" min="0" />
+      <select id="categoria" title="Categoria"><option value="Altro">Altro</option></select>
+      <input type="text" id="categoria-nuova" placeholder="Nuova categoria (facoltativo)" />
+      <input type="text" id="progetto" placeholder="Progetto/Cantiere" />
+      <input type="date" id="data" />
+      <input class="wide" type="text" id="nota" placeholder="Descrizione / Note" />
+      <input type="file" id="ricevuta" title="Allega ricevuta" />
+      <input type="hidden" id="editIndex" />
+      <button type="submit">💾 Salva</button>
+      <button type="button" id="btnAnnulla" style="background:#7f8c8d; display:none">✖️ Annulla modifica</button>
+    </form>
+  </section>
+
+  <section class="row">
+    <div class="box totali">
+      <strong>Saldo: <span id="saldo">€0,00</span></strong><br>
+      Entrate: <span id="totEntrate">€0,00</span> · Uscite: <span id="totUscite">€0,00</span><br>
+      IVA (22% semplice): <span id="iva">€0,00</span><br>
+      Netto (78% semplice): <span id="netto">€0,00</span>
+    </div>
+    <div class="box"><canvas id="grafico"></canvas></div>
+  </section>
+
+  <section class="box">
+    <div class="filters" style="margin-bottom:8px">
+      <input type="text" id="filtroTesto" placeholder="Cerca in note / progetto / categoria" />
+      <select id="filtroTipo">
+        <option value="">Tutti i tipi</option>
+        <option value="entrata">Solo entrate</option>
+        <option value="uscita">Solo uscite</option>
+      </select>
+      <input type="month" id="filtroMese" />
+      <input type="text" id="filtroProgetto" placeholder="Filtra per progetto" />
+      <select id="ordina">
+        <option value="data_desc">Data ↓</option>
+        <option value="data_asc">Data ↑</option>
+        <option value="importo_desc">Importo ↓</option>
+        <option value="importo_asc">Importo ↑</option>
+      </select>
+      <button type="button" id="btnPulisciFiltri" style="background:#7f8c8d">Pulisci filtri</button>
+    </div>
+    <div class="muted" style="display:flex; justify-content: space-between; padding: 0 6px; font-weight:600">
+      <div>Tipo · Importo · Categoria · Progetto · Data · Note</div>
+      <div>Azioni</div>
+    </div>
+    <ul id="lista"></ul>
+  </section>
+
+  <script>
+    // ===== Helper
+    function euro(n){ const v = isNaN(n)?0:Number(n); return v.toLocaleString('it-IT',{style:'currency',currency:'EUR'}); }
+    function parseImporto(val){ if(typeof val==='number')return val; const s=String(val||'').trim().replace(/\./g,'').replace(',', '.'); const num=Number(s); return isNaN(num)?0:num; }
+    function sanitize(s=''){ return s.replace(/[\n\r]/g,' ').slice(0,500); }
+
+    // ===== State
+    let dati = [];
+    let categorie = [];
+    let grafico;
+
+    // ===== DOM refs
+    let tipoEl, importoEl, notaEl, dataEl, progettoEl, ricevutaEl, catEl, catNewEl, editIndexEl;
+    let saldoEl, totEntrateEl, totUsciteEl, ivaEl, nettoEl, listaEl, infoItems;
+    let filtroTestoEl, filtroTipoEl, filtroMeseEl, filtroProgettoEl, ordinaEl;
+
+    // ===== Init
+    function init(){
+      // refs
+      tipoEl = document.getElementById('tipo');
+      importoEl = document.getElementById('importo');
+      notaEl = document.getElementById('nota');
+      dataEl = document.getElementById('data');
+      progettoEl = document.getElementById('progetto');
+      ricevutaEl = document.getElementById('ricevuta');
+      catEl = document.getElementById('categoria');
+      catNewEl = document.getElementById('categoria-nuova');
+      editIndexEl = document.getElementById('editIndex');
+      saldoEl = document.getElementById('saldo');
+      totEntrateEl = document.getElementById('totEntrate');
+      totUsciteEl = document.getElementById('totUscite');
+      ivaEl = document.getElementById('iva');
+      nettoEl = document.getElementById('netto');
+      listaEl = document.getElementById('lista');
+      infoItems = document.getElementById('infoItems');
+      filtroTestoEl = document.getElementById('filtroTesto');
+      filtroTipoEl = document.getElementById('filtroTipo');
+      filtroMeseEl = document.getElementById('filtroMese');
+      filtroProgettoEl = document.getElementById('filtroProgetto');
+      ordinaEl = document.getElementById('ordina');
+
+      // storage
+      try {
+        dati = JSON.parse(localStorage.getItem('movimenti')||'[]');
+        categorie = JSON.parse(localStorage.getItem('categorie')||'["Altro"]');
+      } catch(e){ dati = []; categorie=['Altro']; }
+      if (!Array.isArray(categorie) || !categorie.length) categorie = ['Altro'];
+
+      // listeners
+      document.getElementById('btnTheme').addEventListener('click', toggleTheme);
+      document.getElementById('btnBackup').addEventListener('click', exportJSON);
+      document.getElementById('btnPDF').addEventListener('click', esportaPDF);
+      document.getElementById('btnCSV').addEventListener('click', exportCSV);
+      document.getElementById('inpRestore').addEventListener('change', importJSON);
+      document.getElementById('btnPulisciFiltri').addEventListener('click', () => { filtroTestoEl.value=''; filtroTipoEl.value=''; filtroMeseEl.value=''; filtroProgettoEl.value=''; ordinaEl.value='data_desc'; aggiorna(); });
+      [filtroTestoEl, filtroTipoEl, filtroMeseEl, filtroProgettoEl, ordinaEl].forEach(el => el.addEventListener('input', aggiorna));
+      document.getElementById('form').addEventListener('submit', onSubmit);
+      document.getElementById('btnAnnulla').addEventListener('click', annulla);
+
+      initTheme();
+      aggiornaCategorie();
+      aggiorna();
+    }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+
+    // ===== Core
+    function getFiltratiOrdinati(){
+      let arr = [...dati];
+      const txt = (filtroTestoEl.value||'').trim().toLowerCase();
+      const tp = filtroTipoEl.value;
+      const mese = filtroMeseEl.value;
+      const proj = (filtroProgettoEl.value||'').trim().toLowerCase();
+      if (tp) arr = arr.filter(m => m.tipo === tp);
+      if (txt) arr = arr.filter(m => `${m.nota} ${m.progetto} ${m.categoria}`.toLowerCase().includes(txt));
+      if (proj) arr = arr.filter(m => (m.progetto||'').toLowerCase().includes(proj));
+      if (mese) arr = arr.filter(m => (m.data||'').startsWith(mese));
+      switch (ordinaEl.value){
+        case 'data_asc': arr.sort((a,b) => (a.data||'').localeCompare(b.data||'')); break;
+        case 'importo_desc': arr.sort((a,b) => parseImporto(b.importo) - parseImporto(a.importo)); break;
+        case 'importo_asc': arr.sort((a,b) => parseImporto(a.importo) - parseImporto(b.importo)); break;
+        default: arr.sort((a,b) => (b.data||'').localeCompare(a.data||''));
+      }
+      return arr;
+    }
+
+    function aggiorna(){
+      const arr = getFiltratiOrdinati();
+      listaEl.innerHTML = '';
+      let entrate = 0, uscite = 0;
+      arr.forEach(m => {
+        const imp = parseImporto(m.importo);
+        if (m.tipo === 'entrata') entrate += imp; else uscite += imp;
+        const li = document.createElement('li');
+        li.className = m.tipo;
+        const safeNota = sanitize(m.nota||'');
+        const safeCat = sanitize(m.categoria||'Altro');
+        const safeProj = sanitize(m.progetto||'Generale');
+        const safeData = m.data || '';
+        const idx = dati.indexOf(m);
+        li.innerHTML = `
+          <div style="flex:1; display:flex; flex-direction: column; gap:4px;">
+            <div><strong>${m.tipo === 'entrata' ? '+' : '-'} ${euro(imp)}</strong> · <span class="badge">${safeCat}</span> · <span class="badge">${safeProj}</span> · <span class="muted">${safeData}</span></div>
+            ${safeNota ? `<div class="muted">${safeNota}</div>` : ''}
+          </div>
+          <div class="azioni">
+            ${m.ricevuta ? `<a title="Apri allegato" href="${m.ricevuta}" target="_blank">📎</a>` : ''}
+            <button title="Modifica" onclick="modifica(${idx})">✏️</button>
+            <button title="Elimina" onclick="rimuovi(${idx})">🗑️</button>
+          </div>`;
+        listaEl.appendChild(li);
+      });
+      const saldo = entrate - uscite;
+      const iva = (entrate + uscite) * 0.22;
+      const netto = (entrate + uscite) * 0.78;
+      saldoEl.textContent = euro(saldo);
+      totEntrateEl.textContent = euro(entrate);
+      totUsciteEl.textContent = euro(uscite);
+      ivaEl.textContent = euro(iva);
+      nettoEl.textContent = euro(netto);
+      infoItems.textContent = `${arr.length} movimenti`;
+      aggiornaGrafico();
+      aggiornaCategorie();
+      localStorage.setItem('movimenti', JSON.stringify(dati));
+      localStorage.setItem('categorie', JSON.stringify(categorie));
+    }
+
+    function aggiornaGrafico(){
+      const entrate = dati.filter(m=>m.tipo==='entrata').reduce((a,b)=>a+parseImporto(b.importo),0);
+      const uscite = dati.filter(m=>m.tipo==='uscita').reduce((a,b)=>a+parseImporto(b.importo),0);
+      const ctx = document.getElementById('grafico').getContext('2d');
+      if (grafico) grafico.destroy();
+      if (!window.Chart) return;
+      grafico = new Chart(ctx, { type:'bar', data:{ labels:['Entrate','Uscite','Saldo'], datasets:[{ label:'Totale', data:[entrate, uscite, entrate-uscite] }]} , options:{ plugins:{ legend:{display:false} } } });
+    }
+
+    function aggiornaCategorie(){
+      const fromData = [...new Set(dati.map(m=>m.categoria).filter(Boolean))];
+      const all = Array.from(new Set(['Altro', ...categorie, ...fromData]));
+      categorie = all;
+      catEl.innerHTML = all.map(c=>`<option value="${c}">${c}</option>`).join('');
+      if (!catEl.value) catEl.value = 'Altro';
+    }
+
+    function modifica(i){ const m=dati[i]; if(!m) return; tipoEl.value=m.tipo; importoEl.value=m.importo; notaEl.value=m.nota||''; dataEl.value=m.data||''; progettoEl.value=m.progetto||''; if(!categorie.includes(m.categoria)){ categorie.push(m.categoria); aggiornaCategorie(); } catEl.value=m.categoria||'Altro'; editIndexEl.value=i; document.getElementById('btnAnnulla').style.display='inline-block'; window.scrollTo({top:0,behavior:'smooth'}); }
+    function rimuovi(i){ if(!confirm('Eliminare questo movimento?')) return; dati.splice(i,1); aggiorna(); }
+    function annulla(){ editIndexEl.value=''; document.getElementById('form').reset(); document.getElementById('btnAnnulla').style.display='none'; }
+
+    async function onSubmit(e){
+      e.preventDefault();
+      const tipo = tipoEl.value;
+      const importo = Math.abs(parseImporto(importoEl.value||0));
+      if (!importo) { alert('Inserire un importo valido.'); return; }
+      const nota = sanitize(notaEl.value);
+      const data = dataEl.value || new Date().toISOString().split('T')[0];
+      const progetto = sanitize(progettoEl.value) || 'Generale';
+      const cat = sanitize(catNewEl.value) || catEl.value || 'Altro';
+      if (sanitize(catNewEl.value) && !categorie.includes(cat)) categorie.push(cat);
+      const file = ricevutaEl.files[0];
+      let ricevuta = '';
+      if (file) ricevuta = await new Promise(res=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.readAsDataURL(file); });
+      const mov = { tipo, importo, nota, data, progetto, categoria: cat, ricevuta };
+      const i = editIndexEl.value;
+      if (i === '') dati.push(mov); else dati[i] = mov;
+      e.target.reset(); editIndexEl.value=''; document.getElementById('btnAnnulla').style.display='none'; aggiorna();
+    }
+
+    // ===== Export / Import
+    function exportJSON(){ const blob=new Blob([JSON.stringify(dati)],{type:'application/json'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='backup-EdilKimi.json'; a.click(); }
+    function exportCSV(){ const header=['Tipo','Importo','Categoria','Progetto','Data','Note']; const rows=dati.map(m=>[m.tipo, String(m.importo).replace('.',','), m.categoria||'', m.progetto||'', m.data||'', (m.nota||'').replace(/"/g,'""')]); const csv=[header.join(';'),...rows.map(r=>r.map(v=>(/[";\n]/.test(v)?`"${v}"`:v)).join(';'))].join('\n'); const blob=new Blob([csv],{type:'text/csv;charset=utf-8;'}); const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='movimenti-EdilKimi.csv'; a.click(); }
+    function importJSON(e){ const file=e.target.files[0]; if(!file) return; const r=new FileReader(); r.onload=()=>{ try{ const parsed=JSON.parse(r.result); if(!Array.isArray(parsed)) throw new Error('Formato non valido'); dati=parsed; aggiorna(); }catch(err){ alert('File non valido.'); } }; r.readAsText(file); }
+
+    // ===== Tema
+    function initTheme(){ const t=localStorage.getItem('tema')||'chiaro'; document.body.classList.toggle('dark', t==='scuro'); }
+    function toggleTheme(){ const dark=!document.body.classList.contains('dark'); document.body.classList.toggle('dark'); localStorage.setItem('tema', dark?'scuro':'chiaro'); }
+
+    // ===== PDF
+    async function esportaPDF(){
+      if (!window.jspdf || !window.jspdf.jsPDF) { alert('Libreria PDF non caricata. Controlla la connessione o ricarica la pagina.'); return; }
+      try{
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ unit:'mm', format:'a4' });
+        doc.setFontSize(16); doc.text('Edilkimi',10,10);
+        doc.setFontSize(10); doc.text('Via Provinciale Roma, 27  Capena (RM)',10,16); doc.text(' +39 3892670477 —  info@edilkimi.it',10,22); doc.text(' www.edilkimi.it — P.IVA 18145421006',10,28);
+        doc.setFontSize(13); doc.text('Movimenti - EdilKimi',10,36);
+        doc.setFontSize(10); doc.text(`Data di stampa: ${new Date().toLocaleDateString('it-IT')}`,150,10);
+        let y=46; doc.setFontSize(11); doc.text('N.  Tipo   Importo     Categoria     Progetto     Data     Note',10,y); y+=6;
+        doc.setFontSize(9);
+        const arr = getFiltratiOrdinati();
+        arr.forEach((m,i)=>{ const nota=(m.nota||'').slice(0,80); const riga=`${i+1}.  ${m.tipo.toUpperCase()}   ${euro(m.importo)}   ${m.categoria||''}   ${m.progetto||''}   ${m.data||''}   ${nota}`; doc.text(riga,10,y); y+=5; if(y>270){ doc.addPage(); y=20; } });
+        y+=6; const entrate=dati.filter(m=>m.tipo==='entrata').reduce((s,m)=>s+parseImporto(m.importo),0); const uscite=dati.filter(m=>m.tipo==='uscita').reduce((s,m)=>s+parseImporto(m.importo),0); const saldo=entrate-uscite; const iva=(entrate+uscite)*0.22; const netto=(entrate+uscite)*0.78;
+        doc.setFontSize(11); doc.text(`Totale Entrate: ${euro(entrate)}`,10,y); y+=5; doc.text(`Totale Uscite: ${euro(uscite)}`,10,y); y+=5; doc.text(`Saldo: ${euro(saldo)}`,10,y); y+=8; doc.text(`Totale IVA (semplice): ${euro(iva)}`,10,y); y+=5; doc.text(`Totale Netto (semplice): ${euro(netto)}`,10,y);
+        doc.save('movimenti-EdilKimi.pdf');
+      }catch(e){ console.error(e); alert('Errore durante la creazione del PDF: '+e.message); }
+    }
+  </script>
+</body>
+</html>
